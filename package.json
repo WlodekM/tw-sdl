@@ -1,0 +1,33 @@
+{
+  "dependencies": {
+    "@napi-rs/canvas": "^0.1.80",
+    "@turbowarp/json": "^0.1.2",
+    "@turbowarp/jszip": "^3.11.0",
+    "@turbowarp/nanolog": "^0.2.0",
+    "@turbowarp/scratch-svg-renderer": "^1.0.202505311824",
+    "@vernier/godirect": "1.5.0",
+    "arraybuffer-loader": "^1.0.6",
+    "atob": "2.1.2",
+    "btoa": "1.2.1",
+    "canvas-toBlob": "1.0.0",
+    "decode-html": "2.0.0",
+    "decompress": "^4.2.1",
+    "diff-match-patch": "1.0.4",
+    "format-message": "6.2.1",
+    "htmlparser2": "3.10.0",
+    "immutable": "3.8.2",
+    "node-sdl": "^3.0.3",
+    "scratch-parser": "github:TurboWarp/scratch-parser#master",
+    "scratch-render-fonts": "^1.0.229",
+    "scratch-sb1-converter": "0.2.7",
+    "scratch-storage": "^4.0.227",
+    "scratch-translate-extension-languages": "0.0.20191118205314",
+    "text-encoding": "0.7.0",
+    "uuid": "8.3.2",
+    "worker-loader": "^1.1.1"
+  },
+  "peerDependencies": {
+    "@turbowarp/scratch-svg-renderer": "^1.0.0-202312300007-62fe825"
+  },
+  "type": "module"
+}
