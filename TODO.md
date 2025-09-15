@@ -1,0 +1,6 @@
+- [ ] keyboard input
+- [ ] isTouchingPoint rotation support
+- [ ] proper isTouchingPoint
+- [ ] check if extensions can import()
+	- [ ] if so, add a sandbox or something with an interface for allowing arbitriary js
+- [ ] pen
