@@ -166,6 +166,13 @@ if (debugMode) {
 	vm.runtime.enableDebug()
 	vm.runtime.debug = true
 }
+
+vm.runtime.precompile()
+
+vm.runtime.on(Runtime.BEFORE_EXECUTE, () => {
+	// console.log('step')
+})
+
 if(!HEADLESS) {
 	const sdl = await import('@kmamal/sdl')
 	vm.runtime.on(Runtime.FRAMERATE_CHANGED, () => {
@@ -263,6 +270,28 @@ if(!HEADLESS) {
 			key: KEYS[e.key]??key
 		})
 	})
+	window.on('beforeClose', e => {
+		/** @type {Target} */
+		const stage = vm.runtime.getTargetForStage();
+		if (!stage)
+			return;
+		if (!stage.lookupVariableByNameAndType('TW_SDL_PREVENT_CLOSE'))
+			return;
+		e.prevent()
+	})
+	window.on('close', () => {
+		console.log("window destroyed, stopping project and exiting in one second if doesnt stop running")
+		vm.runtime.stopAll()
+		vm.runtime.once(Runtime.AFTER_EXECUTE, () => {
+			console.log('exited gracefully')
+			process.exit(0);
+		})
+		setTimeout(() => {
+			console.log('timed out')
+			vm.runtime.quit()
+			process.exit(0);
+		}, 1000)
+	})
 	window.on('keyUp', (e) => {
 		if (!e.key) return console.warn(`Unknown key`, e)
 		let key = e.key;
@@ -301,8 +330,22 @@ if(!HEADLESS) {
 			return function(...args) {console.log(`${name}(${args.join(", ")})`);return returner()}
 		return function(...args) {console.log(`${name}(${args.join(", ")})`)}
 	}
+	
+	/**
+	 * @typedef {{
+	 * 	from: [number, number],
+	 * 	to: [number, number],
+	 * 	color: [number, number, number, number],
+	 * 	width: number
+	 * }} Stroke
+	 */
 
-	vm.attachRenderer({
+	//TODO: make it not redraw all of the pen shit for every frame
+	/** @type {Stroke[]} */
+	let penStrokes = []
+
+
+	vm.attachRenderer(new Proxy({
 		setLayerGroupOrdering: createLoggingFunction('setLayerGroupOrdering'),
 		createDrawable: createLoggingFunction('createDrawable'),
 		createTextSkin: createLoggingFunction('createTextSkin'),
@@ -310,11 +353,57 @@ if(!HEADLESS) {
 		getCurrentSkinSize: createLoggingFunction('getCurrentSkinSize',()=>[0,0]),
 		getNativeSize: createLoggingFunction('getNativeSize',()=>[0,0]),
 		updateDrawablePosition: createLoggingFunction('updateDrawablePosition'),
-		draw: drawSprites
-	})
+		draw: drawSprites,
+		requestRedraw() {
+			vm.runtime.redrawRequested = true;
+			drawSprites()
+		},
+		createPenSkin() {
+			return 1;
+		},
+		createDrawable() {
+			return 2;
+		},
+		penLine(_skin, attribs, x1, y1, x2, y2) {
+			// console.log(attribs)
+			penStrokes.push({
+				from: [x1, y1],
+				to: [x2, y2],
+				color: [...attribs.color4f],
+				width: attribs.diameter
+			})
+		},
+		penPoint(_skin, attribs, x, y) {
+			penStrokes.push({
+				from: [x, y],
+				to: [x, y],
+				color: [...attribs.color4f],
+				width: attribs.diameter
+			})
+			//TODO: this
+		},
+		penClear() {
+			penStrokes = []
+		}
+	}, {
+		get(t, p) {
+			// console.log(`runtime.${p}`);
+			return t[p]
+		}
+	}))
+
+	let last = Date.now()
+
+	const costumeCache = {}
+
+
+	console.log(vm.renderer, vm.runtime.renderer)
 
 	// console.log(vm.runtime.ioDevices.mouse._pickTarget(0, 0))
-	async function drawSprites(timestamp) {
+	function drawSprites(timestamp) {
+		if (window.destroyed)
+			return;
+		// vm.runtime.redrawRequested = false;
 		const newSceneBuffer = []
 		// const canvas = document.getElementById('scratchCanvas');
 		// if (!canvas) return;
@@ -333,15 +422,51 @@ if(!HEADLESS) {
 		ctx.fillStyle = 'white';
 		ctx.fillRect(0, 0, width, height);
 
+		// console.log(penStrokes)
+		function drawStrokes() {
+			ctx.lineCap = 'butt';
+			for (const stroke of penStrokes) {
+				// ctx.globalAlpha = stroke.color[3]
+				const style = `rgba(${stroke.color.map((c,i)=>i==3?c:Math.floor(c * 255)).join(', ')})`
+				// console.log(stroke.color)
+				ctx.beginPath()
+				// console.log(stroke.from[0] + (width / 2), stroke.from[1] + (height / 2))
+				ctx.moveTo(stroke.from[0] + (width / 2), -stroke.from[1] + (height / 2))
+				ctx.lineTo(stroke.to[0] + (width / 2), -stroke.to[1] + (height / 2))
+				// ctx.lineTo(stroke.from[0] + (width / 2), -stroke.from[1] + (height / 2))
+				ctx.lineWidth = stroke.width;
+				ctx.strokeStyle = style
+				ctx.closePath()
+				ctx.stroke()
+				ctx.beginPath()
+				ctx.fillStyle = style
+				// console.log(stroke)
+				ctx.lineWidth = 0;
+				ctx.arc(stroke.from[0] + (width / 2), -stroke.from[1] + (height / 2),
+					stroke.width / 2,
+					0,
+					360);
+				ctx.fill();
+				ctx.closePath()
+				ctx.stroke()
+				// ctx.globalAlpha = 1
+			}
+		}
+
 		/** @type {Target[]} */
-		const sprites = Scratch.vm.runtime.targets.filter(target => !target.isStage)
+		const sprites = Scratch.vm.runtime.targets//.filter(target => !target.isStage)
 			.sort((a, b) => a.drawableID - b.drawableID);
 
 		// sprites.forEach(sprite => {
 		for (const sprite of sprites) {
+			if (sprite.isStage) {
+				// console.log('stage')
+				drawStrokes();
+				continue;
+			}
 			// console.log(sprite);
 			// return;
-			if (!sprite.visible) return;
+			if (!sprite.visible) continue;
 			let x = canvas.width / 2 + sprite.x;
 			let y = canvas.height / 2 - sprite.y;
 			const size = sprite.size;
@@ -350,11 +475,25 @@ if(!HEADLESS) {
 			const costume = sprite.getCurrentCostume()
 			const costumeURI = costume.asset.encodeDataURI();
 			let scale = size / 100;
-			if (!costumeURI) return;
+			if (!costumeURI) continue;
 			// x -= costume.rotationCenterX * scale;
 			// y -= costume.rotationCenterY * scale;
 			// console.log(costumeURI)
-			const img = await loadImage(costumeURI)//new Image();
+			if (!costumeCache[costumeURI]) {
+				// console.log('loading', costumeURI)
+				costumeCache[costumeURI] = {
+					loaded: false,
+				};
+				loadImage(costumeURI).then(i => {
+					costumeCache[costumeURI].image = i;
+					costumeCache[costumeURI].loaded = true;
+					// console.log('loaded', costumeURI, costumeCache)
+				});
+				continue;
+			}
+			if (!costumeCache[costumeURI].loaded)
+				continue;
+			const img = costumeCache[costumeURI].image //new Image();
 			// img.src = costumeURI;
 			// ctx.filter = '';
 			// if (sprite.effects.brightness)
@@ -397,10 +536,13 @@ opacity(${Math.round(100 - sprite.effects.ghost)}%)`;
 		}
 		scene = newSceneBuffer;
 		render()
+		while (Date.now() < (last + (1000 / vm.runtime.frameLoop.framerate))) {}
+		last = Date.now()
+		vm.runtime.redrawRequested = false;
 		// console.log('frame')
 		// return;
 		// tref = requestAnimationFrame(drawSprites);
 	}
 }
-else vm.greenFlag()
+else vm.greenFlag();
 // requestAnimationFrame(drawSprites);
