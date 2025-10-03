@@ -113,7 +113,9 @@ var getAssetUrl = function (asset) {
     return assetUrlParts.join('');
 };
 storage.addWebStore([AssetType.ImageVector, AssetType.ImageBitmap, AssetType.Sound],
-	getAssetUrl)
+	getAssetUrl);
+
+const fast_pen_rendering = process.argv.includes('-f');
 
 const vm = new VM();
 const projectJSON = fs.readFileSync(path.join(dirname, './temp-project/project.json'));
@@ -218,7 +220,7 @@ if(!HEADLESS) {
 		window.render(width, height, width * 4, 'rgba32', buffer)
 	}
 
-	let fps = vm?.runtime?.frameLoop?.framerate ?? 30; //TODO - get this from runtime somehow
+	let fps = vm?.runtime?.frameLoop?.framerate ?? 30;
 	var delay = 1000 / fps,								 // calc. time per frame
 		time = null,									 // start time
 		frame = -1,										 // frame count
@@ -365,13 +367,56 @@ if(!HEADLESS) {
 			return 2;
 		},
 		penLine(_skin, attribs, x1, y1, x2, y2) {
-			// console.log(attribs)
-			penStrokes.push({
-				from: [x1, y1],
-				to: [x2, y2],
-				color: [...attribs.color4f],
-				width: attribs.diameter
-			})
+			console.log(x1, y1, x2, y2)
+			if(!fast_pen_rendering) {
+				penStrokes.push({
+					from: [x1, y1],
+					to: [x2, y2],
+					color: [...attribs.color4f],
+					width: attribs.diameter
+				})
+				return;
+			}
+			const uh = [[x1, y1], [x2, y2]].sort(([a], [b]) => a - b);
+			console.log(uh)
+			const [[_x1, _y1], [_x2, _y2]] =
+				uh.map(([x, y]) =>
+					[x + (pbWidth / 2), y + (pbHeight / 2)]
+				);
+			const dx = x2 - x1;
+			const dy = y2 - y1;
+			console.log(attribs, [[_x1, _y1], [_x2, _y2]])
+			// const color = attribs.color4f.reduce((p, c, i) => {
+			// 	return p | (c << (i * 8))
+			// }, 0)
+			const color = attribs.color4f.map(a => Math.floor(a*255))
+			function set_color(x, y) {
+				const i = (y * pbWidth) + x * 4;
+				console.log(color, i, x, y)
+				penBuffer.data[i*4+0] = color[0+0]
+				penBuffer.data[i*4+1] = color[0+1]
+				penBuffer.data[i*4+2] = color[0+2]
+				penBuffer.data[i*4+3] = color[0+3]
+			}
+			if (dx != 0) {
+				const m = dy/dx;
+				// for x from x1 to x2 do
+				for (let x = _x1; x <= _x2; x++) {
+					const y = m * (x - _x1) + _y1
+					// plot(x, y);
+					// console.log((y * pbWidth) + x, color, y, x, m)
+					set_color(x, y)
+				}
+			} else if (dy != 0) {
+				const m = dx/dy;
+				// for x from x1 to x2 do
+				for (let y = _y1; y <= _y2; y++) {
+					const x = m * (y - _y1) + _x1
+					// plot(x, y);
+					// console.log((y * pbWidth) + x, color, y, x, m)
+					set_color(x, y)
+				}
+			}
 		},
 		penPoint(_skin, attribs, x, y) {
 			penStrokes.push({
@@ -396,8 +441,35 @@ if(!HEADLESS) {
 
 	const costumeCache = {}
 
+	// console.log(vm.renderer, vm.runtime.renderer)
 
-	console.log(vm.renderer, vm.runtime.renderer)
+	// RGBA buffer
+	const [pbHeight, pbWidth] = [vm.runtime.stageHeight, vm.runtime.stageWidth]
+	const penBuffer = ctx.createImageData(pbWidth, pbHeight);
+	for (let i = 0; i < penBuffer.data.length; i+=4) {
+		// if (i % 4 == 0) {
+		// 	penBuffer.data[i] = 255;
+		// 	continue;
+		// }
+		const x = (i /4 % pbHeight)
+		const dx = Math.floor(x / pbWidth * 255)
+		const y = Math.floor(i / 4 / pbHeight)
+		penBuffer.data[i]   = dx % 255;
+		penBuffer.data[i+1] = y % 255;
+		console.log(x, Math.floor(x/255) * 40, i)
+		penBuffer.data[i+2] = (Math.floor(x/255) * 40) % 255;
+		penBuffer.data[i+3] = 255;
+		// if (i % 4 == 1) {
+		// 	penBuffer.data[i] = (i % 255);
+		// 	continue;
+		// }
+		// penBuffer.data[i] = 0;
+	}
+	// penBuffer.data[0] = 255
+	// penBuffer.data[5] = 255
+	// penBuffer.data[1294] = 255
+	// new Array(vm.runtime.stageHeight * vm.runtime.stageWidth)
+	// 	.fill(0).map(_=>0);
 
 	// console.log(vm.runtime.ioDevices.mouse._pickTarget(0, 0))
 	function drawSprites(timestamp) {
@@ -424,6 +496,10 @@ if(!HEADLESS) {
 
 		// console.log(penStrokes)
 		function drawStrokes() {
+			if (fast_pen_rendering) {
+				ctx.putImageData(penBuffer, 0, 0);
+				return;
+			}
 			ctx.lineCap = 'butt';
 			for (const stroke of penStrokes) {
 				// ctx.globalAlpha = stroke.color[3]
