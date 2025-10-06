@@ -1,4 +1,4 @@
-import { createCanvas, loadImage } from '@napi-rs/canvas';
+import { Canvas, createCanvas, loadImage } from '@napi-rs/canvas';
 import VM from "./scratch-vm/src/virtual-machine.js";
 import fs from 'node:fs'
 import decompress from 'decompress'
@@ -49,8 +49,11 @@ function requestAnimationFrame(f){
 if (fs.existsSync(path.join(dirname, 'temp-project')))
 	fs.rmSync(path.join(dirname, 'temp-project'), {recursive: true})
 fs.mkdirSync(path.join(dirname, 'temp-project'))
-await decompress(args._[2] ?? 'Project-framerate.sb3', path.join(dirname, 'temp-project'), {})
+console.log('loading project: decompressiong project');
+await decompress(args._[2] ?? 'Project-framerate.sb3', path.join(dirname, 'temp-project'))
+console.log('loading project: decompressiong project - done');
 
+console.log('loading project: loading project');
 const storage = new scratchStorage.ScratchStorage();
 
 const storageServerApp = express(); //FIXME - figure out a better way to load assets
@@ -119,6 +122,7 @@ const fast_pen_rendering = process.argv.includes('-f');
 
 const vm = new VM();
 const projectJSON = fs.readFileSync(path.join(dirname, './temp-project/project.json'));
+console.log('loading project: loading project - reading project json');
 
 globalThis.document = {
 	createElement(type) {
@@ -150,9 +154,11 @@ if (HEADLESS)
 
 vm.securityManager.canLoadExtensionFromProject = () => true
 vm.securityManager.getSandboxMode = () => 'unsandboxed'
+console.log('loading project: loading project - loading project json');
 await vm.loadProject(projectJSON)
 // await vm._loadExtensions();
 await vm.extensionManager.allAsyncExtensionsLoaded();
+console.log('loading project: loading project - project json loaded');
 
 storageServer.close()
 
@@ -189,10 +195,21 @@ if(!HEADLESS) {
 
 	/////////////////////////////////////////////////
 
-	const [width, height] = [vm.runtime.stageWidth?? 480,vm.runtime.stageHeight?? 360]
+	const [width, height] = [vm.runtime.stageWidth?? 480,vm.runtime.stageHeight?? 360];
 
-	const canvas = createCanvas(width, height)
+	console.log(`${width}x${height}`)
+
+	const canvas = createCanvas(width, height);
 	const ctx = canvas.getContext('2d');
+	/** @type {Canvas} */
+	let pen_canvas;
+	/** @type {import('@napi-rs/canvas').SKRSContext2D} */
+	let pen_ctx;
+	if (fast_pen_rendering) {
+		pen_canvas = createCanvas(width, height)
+		pen_ctx = pen_canvas.getContext('2d');
+		pen_ctx.clearRect(0, 0, width, height)
+	}
 	function makeWindow() {
 		const config = {
 			title: "SDL-Warp",
@@ -212,6 +229,7 @@ if(!HEADLESS) {
 	}
 	const window = makeWindow();
 
+	console.log('showing window')
 	window.show();
 
 	function render() {
@@ -225,10 +243,10 @@ if(!HEADLESS) {
 		time = null,									 // start time
 		frame = -1,										 // frame count
 		tref;											 // rAF time reference
-	// LET IT RIPP
-	vm.greenFlag()
-	// actually nvm
-	vm.runtime.frameLoop.stop()
+	// // LET IT RIPP
+	// vm.greenFlag()
+	// // actually nvm
+	// vm.runtime.frameLoop.stop()
 
 	// vm.runtime.emit()
 	// vm.postIOData('mouse')
@@ -237,8 +255,8 @@ if(!HEADLESS) {
 		const coordinates = {
 			isDown: typeof button == 'number',
 			button: button,
-			x: x,// + (width),
-			y: y,// + (height),
+			x: x - (width / 2),
+			y: y - (height / 2),
 			canvasWidth: width,
 			canvasHeight: height,
 			wasDragged: isDragging
@@ -251,6 +269,7 @@ if(!HEADLESS) {
 		window.on("*", console.log)
 	const KEYS = {
 		space: ' ',
+		return: 'Enter'
 	}
 	window.on('keyDown', (e) => {
 		if (debugMode) {
@@ -320,8 +339,8 @@ if(!HEADLESS) {
 		return this.runtime.getTargetForStage();
 	}
 
-	vm.runtime.frameLoop.setFramerate(30)
-	vm.runtime.frameLoop.start()
+	// vm.runtime.frameLoop.setFramerate(30)
+	// vm.runtime.frameLoop.start()
 
 	function createLoggingFunction(name, returner) {
 		if (!debugMode)
@@ -366,8 +385,18 @@ if(!HEADLESS) {
 		createDrawable() {
 			return 2;
 		},
+		updateDrawableDirectionScale(){},
+		updateDrawableVisible(){},
+		updateDrawableEffect(){},
+		setDrawableOrder(){},
+		getFencedPositionOfDrawable(_id, [x, y]) {
+			return [x, y];
+		},
+		penStamp(_skin, _drawable) {
+			//TODO - this
+		},
+		destroyDrawable(){},
 		penLine(_skin, attribs, x1, y1, x2, y2) {
-			console.log(x1, y1, x2, y2)
 			if(!fast_pen_rendering) {
 				penStrokes.push({
 					from: [x1, y1],
@@ -377,57 +406,44 @@ if(!HEADLESS) {
 				})
 				return;
 			}
-			const uh = [[x1, y1], [x2, y2]].sort(([a], [b]) => a - b);
-			console.log(uh)
-			const [[_x1, _y1], [_x2, _y2]] =
-				uh.map(([x, y]) =>
-					[x + (pbWidth / 2), y + (pbHeight / 2)]
-				);
-			const dx = x2 - x1;
-			const dy = y2 - y1;
-			console.log(attribs, [[_x1, _y1], [_x2, _y2]])
-			// const color = attribs.color4f.reduce((p, c, i) => {
-			// 	return p | (c << (i * 8))
-			// }, 0)
-			const color = attribs.color4f.map(a => Math.floor(a*255))
-			function set_color(x, y) {
-				const i = (y * pbWidth) + x * 4;
-				console.log(color, i, x, y)
-				penBuffer.data[i*4+0] = color[0+0]
-				penBuffer.data[i*4+1] = color[0+1]
-				penBuffer.data[i*4+2] = color[0+2]
-				penBuffer.data[i*4+3] = color[0+3]
-			}
-			if (dx != 0) {
-				const m = dy/dx;
-				// for x from x1 to x2 do
-				for (let x = _x1; x <= _x2; x++) {
-					const y = m * (x - _x1) + _y1
-					// plot(x, y);
-					// console.log((y * pbWidth) + x, color, y, x, m)
-					set_color(x, y)
-				}
-			} else if (dy != 0) {
-				const m = dx/dy;
-				// for x from x1 to x2 do
-				for (let y = _y1; y <= _y2; y++) {
-					const x = m * (y - _y1) + _x1
-					// plot(x, y);
-					// console.log((y * pbWidth) + x, color, y, x, m)
-					set_color(x, y)
-				}
-			}
+			const style = `rgba(${attribs.color4f.map((c,i)=>i==3?c:Math.floor(c * 255)).join(', ')})`
+			// console.log(stroke.color)
+			pen_ctx.beginPath()
+			// console.log(stroke.from[0] + (width / 2), stroke.from[1] + (height / 2))
+			pen_ctx.moveTo(x1 + (width / 2), -y1 + (height / 2))
+			pen_ctx.lineTo(x2 + (width / 2), -y2 + (height / 2))
+			// ctx.lineTo(stroke.from[0] + (width / 2), -stroke.from[1] + (height / 2))
+			pen_ctx.lineWidth = attribs.diameter;
+			pen_ctx.strokeStyle = style
+			pen_ctx.closePath()
+			pen_ctx.stroke()
 		},
 		penPoint(_skin, attribs, x, y) {
-			penStrokes.push({
-				from: [x, y],
-				to: [x, y],
-				color: [...attribs.color4f],
-				width: attribs.diameter
-			})
-			//TODO: this
+			if(!fast_pen_rendering) {
+				penStrokes.push({
+					from: [x, y],
+					to: [x, y],
+					color: [...attribs.color4f],
+					width: attribs.diameter
+				})
+			}
+			const style = `rgba(${attribs.color4f.map((c,i)=>i==3?c:Math.floor(c * 255)).join(', ')})`
+			pen_ctx.beginPath();
+			pen_ctx.fillStyle = style;
+			pen_ctx.lineWidth = 0;
+			pen_ctx.arc(
+				x + (width / 2),
+				-y + (height / 2),
+				attribs.diameter / 1.5,
+				0, 360
+			);
+			pen_ctx.fill();
+			pen_ctx.closePath();
+			pen_ctx.stroke();
 		},
 		penClear() {
+			if(!fast_pen_rendering)
+				return pen_ctx.clearRect(0, 0, width, height)
 			penStrokes = []
 		}
 	}, {
@@ -436,35 +452,40 @@ if(!HEADLESS) {
 			return t[p]
 		}
 	}))
+	console.log('renderer attached')
 
 	let last = Date.now()
 
 	const costumeCache = {}
 
+	console.log('starting project')
+	vm.runtime.on(Runtime.RUNTIME_STARTED, () => console.log('RUNTIME_STARTED'))
+	vm.greenFlag()
+
 	// console.log(vm.renderer, vm.runtime.renderer)
 
 	// RGBA buffer
-	const [pbHeight, pbWidth] = [vm.runtime.stageHeight, vm.runtime.stageWidth]
-	const penBuffer = ctx.createImageData(pbWidth, pbHeight);
-	for (let i = 0; i < penBuffer.data.length; i+=4) {
-		// if (i % 4 == 0) {
-		// 	penBuffer.data[i] = 255;
-		// 	continue;
-		// }
-		const x = (i /4 % pbHeight)
-		const dx = Math.floor(x / pbWidth * 255)
-		const y = Math.floor(i / 4 / pbHeight)
-		penBuffer.data[i]   = dx % 255;
-		penBuffer.data[i+1] = y % 255;
-		console.log(x, Math.floor(x/255) * 40, i)
-		penBuffer.data[i+2] = (Math.floor(x/255) * 40) % 255;
-		penBuffer.data[i+3] = 255;
-		// if (i % 4 == 1) {
-		// 	penBuffer.data[i] = (i % 255);
-		// 	continue;
-		// }
-		// penBuffer.data[i] = 0;
-	}
+	// const [pbHeight, pbWidth] = [vm.runtime.stageHeight, vm.runtime.stageWidth]
+	// const penBuffer = ctx.createImageData(pbWidth, pbHeight);
+	// for (let i = 0; i < penBuffer.data.length; i+=4) {
+	// 	// if (i % 4 == 0) {
+	// 	// 	penBuffer.data[i] = 255;
+	// 	// 	continue;
+	// 	// }
+	// 	const x = (i /4 % pbHeight)
+	// 	const dx = Math.floor(x / pbWidth * 255)
+	// 	const y = Math.floor(i / 4 / pbHeight)
+	// 	penBuffer.data[i]   = dx % 255;
+	// 	penBuffer.data[i+1] = y % 255;
+	// 	console.log(x, Math.floor(x/255) * 40, i)
+	// 	penBuffer.data[i+2] = (Math.floor(x/255) * 40) % 255;
+	// 	penBuffer.data[i+3] = 255;
+	// 	// if (i % 4 == 1) {
+	// 	// 	penBuffer.data[i] = (i % 255);
+	// 	// 	continue;
+	// 	// }
+	// 	// penBuffer.data[i] = 0;
+	// }
 	// penBuffer.data[0] = 255
 	// penBuffer.data[5] = 255
 	// penBuffer.data[1294] = 255
@@ -497,7 +518,10 @@ if(!HEADLESS) {
 		// console.log(penStrokes)
 		function drawStrokes() {
 			if (fast_pen_rendering) {
-				ctx.putImageData(penBuffer, 0, 0);
+				// const data = pen_ctx.getImageData(0, 0, pen_canvas.width, pen_canvas.height);
+				// fs.writeFileSync('pen_canvas', data.data)
+				// ctx.putImageData(data, 0, 0);
+				ctx.drawImage(pen_canvas, 0, 0);
 				return;
 			}
 			ctx.lineCap = 'butt';
@@ -604,7 +628,7 @@ opacity(${Math.round(100 - sprite.effects.ghost)}%)`;
 
 			ctx.restore();
 			ctx.fillStyle = 'black'
-			if (sprite._customState['Scratch.looks'].text) {
+			if (sprite._customState['Scratch.looks'] && sprite._customState['Scratch.looks'].text) {
 				ctx.font = 'sans-serif 16px'
 				ctx.fillText(sprite._customState['Scratch.looks'].text, width / 2 +x,  height / -2 + y)
 			}
